@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pomodoro Timer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Outfit', 'sans-serif'],
+                    },
+                }
+            }
+        }
+    </script>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+        }
+        canvas#gl-canvas {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: -1;
+            display: block;
+        }
+    </style>
+</head>
+<body class="text-slate-100 min-h-screen flex flex-col justify-center items-center font-sans selection:bg-emerald-500 selection:text-white">
+
+    <!-- WebGL Sunlit Cutting Mat Canvas Background -->
+    <canvas id="gl-canvas"></canvas>
+
+    <!-- Main Content -->
+    <main class="w-full flex flex-col items-center justify-center px-4">
+        <div class="w-full max-w-md bg-[#0a4a32]/85 backdrop-blur-xl border border-white/20 rounded-3xl p-8 shadow-2xl flex flex-col items-center relative">
+            
+            <!-- Mode Selector Tabs -->
+            <div class="flex bg-black/50 p-1.5 rounded-xl border border-white/15 mb-8 w-full max-w-xs">
+                <button onmousedown="playClickSound()" onclick="switchMode('work')" id="btn-work" class="flex-1 py-2 text-xs font-medium rounded-lg transition-all text-white bg-emerald-600 shadow-sm">Work (25m)</button>
+                <button onmousedown="playClickSound()" onclick="switchMode('break')" id="btn-break" class="flex-1 py-2 text-xs font-medium rounded-lg transition-all text-emerald-200/70 hover:text-white">Break (5m)</button>
+            </div>
+
+            <!-- Timer Display -->
+            <div class="my-4 flex flex-col items-center">
+                <div id="timer-display" class="font-bold tracking-tight text-white tabular-nums text-6xl md:text-7xl drop-shadow-md">
+                    25:00
+                </div>
+                <p id="timer-status" class="text-xs font-medium text-emerald-200/80 mt-3 tracking-wider uppercase">Focus Session</p>
+            </div>
+
+            <!-- Controls -->
+            <div class="flex items-center gap-4 w-full mt-8">
+                <button onmousedown="playClickSound()" onclick="toggleTimer()" id="btn-toggle" class="flex-1 py-3.5 bg-emerald-600 hover:bg-emerald-500 text-white font-medium rounded-xl shadow-lg transition-all transform active:scale-95 flex items-center justify-center gap-2">
+                    <svg id="icon-play" xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 fill-current" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                    <span id="text-toggle">Start</span>
+                </button>
+                <button onmousedown="playClickSound()" onclick="resetTimer()" class="p-3.5 bg-black/40 hover:bg-black/60 text-emerald-200 hover:text-white rounded-xl transition-all border border-white/15 flex items-center justify-center shadow-md" title="Reset">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 fill-current" viewBox="0 0 24 24"><path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/></svg>
+                </button>
+            </div>
+
+        </div>
+    </main>
+
+    <!-- Instant Responsive Mechanical Click Synthesizer -->
+    <script>
+        let audioCtx = null;
+
+        function playClickSound() {
+            try {
+                if (!audioCtx) {
+                    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                }
+                if (audioCtx.state === 'suspended') {
+                    audioCtx.resume();
+                }
+
+                const now = audioCtx.currentTime;
+
+                // 1. Expanded crisp mechanical click / clack transient (duration ~45ms)
+                const noiseBufferLen = audioCtx.sampleRate * 0.045;
+                const buffer = audioCtx.createBuffer(1, noiseBufferLen, audioCtx.sampleRate);
+                const data = buffer.getChannelData(0);
+                for (let i = 0; i < noiseBufferLen; i++) {
+                    data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / noiseBufferLen, 1.5);
+                }
+
+                const noise = audioCtx.createBufferSource();
+                noise.buffer = buffer;
+
+                const filter = audioCtx.createBiquadFilter();
+                filter.type = 'bandpass';
+                filter.frequency.setValueAtTime(1800, now);
+                filter.Q.setValueAtTime(2.5, now);
+
+                const noiseGain = audioCtx.createGain();
+                noiseGain.gain.setValueAtTime(0.5, now);
+                noiseGain.gain.exponentialRampToValueAtTime(0.002, now + 0.045);
+
+                noise.connect(filter);
+                filter.connect(noiseGain);
+                noiseGain.connect(audioCtx.destination);
+
+                // 2. Richer body resonance (expanded thock tail, duration ~70ms)
+                const osc = audioCtx.createOscillator();
+                const oscGain = audioCtx.createGain();
+
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(260, now);
+                osc.frequency.exponentialRampToValueAtTime(70, now + 0.07);
+
+                oscGain.gain.setValueAtTime(0.65, now);
+                oscGain.gain.exponentialRampToValueAtTime(0.001, now + 0.07);
+
+                osc.connect(oscGain);
+                oscGain.connect(audioCtx.destination);
+
+                noise.start(now);
+                osc.start(now);
+                osc.stop(now + 0.08);
+
+            } catch (e) {
+                // Ignore audio context restrictions
+            }
+        }
+    </script>
+
+    <!-- WebGL Sunlit Cutting Mat Shader & Renderer Script -->
+    <script>
+        function fitGrid(span, unit) {
+            const count = Math.max(1, Math.round(span / Math.max(4, unit)));
+            return { count, step: span / count };
+        }
+
+        function labelEvery(step) {
+            return step >= 22 ? 1 : step >= 11 ? 2 : 5;
+        }
+
+        function borderFor(unit) {
+            return Math.min(30, Math.max(16, Math.round(unit * 0.72)));
+        }
+
+        function hexToLinear(hex) {
+            let h = hex.trim().replace("#", "");
+            if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+            if (!/^[0-9a-fA-F]{6}$/.test(h)) return [0, 0, 0];
+            return [0, 2, 4].map((i) => Math.pow(parseInt(h.slice(i, i + 2), 16) / 255, 2.2));
+        }
+
+        function drawMat(ctx, w, h, dpr, unit) {
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            ctx.globalCompositeOperation = "source-over";
+            ctx.globalAlpha = 1;
+            ctx.fillStyle = "#000";
+            ctx.fillRect(0, 0, w, h);
+            ctx.globalCompositeOperation = "lighter";
+
+            const b = borderFor(unit);
+            const iw = w - 2 * b;
+            const ih = h - 2 * b;
+            if (iw <= 0 || ih <= 0) return;
+
+            ctx.fillStyle = "#0f0";
+            ctx.fillRect(0, 0, w, b);
+            ctx.fillRect(0, h - b, w, b);
+            ctx.fillRect(0, b, b, ih);
+            ctx.fillRect(w - b, b, b, ih);
+
+            const gx = fitGrid(iw, unit);
+            const gy = fitGrid(ih, unit);
+            const X = (i) => b + i * gx.step;
+            const Y = (j) => h - b - j * gy.step;
+            const snap = (v, lw) => (Math.round(v * dpr) + (lw * dpr) % 2 / 2) / dpr;
+
+            ctx.strokeStyle = "#f00";
+            ctx.fillStyle = "#f00";
+            const line = (x0, y0, x1, y1) => {
+                ctx.beginPath();
+                ctx.moveTo(x0, y0);
+                ctx.lineTo(x1, y1);
+                ctx.stroke();
+            };
+
+            for (const major of [false, true]) {
+                ctx.lineWidth = major ? 2 : 1;
+                ctx.globalAlpha = major ? 0.92 : 0.2;
+                for (let i = 0; i <= gx.count; i++) {
+                    if ((i % 5 === 0 || i === gx.count) !== major) continue;
+                    const x = snap(X(i), ctx.lineWidth);
+                    line(x, b, x, h - b);
+                }
+                for (let j = 0; j <= gy.count; j++) {
+                    if ((j % 5 === 0 || j === gy.count) !== major) continue;
+                    const y = snap(Y(j), ctx.lineWidth);
+                    line(b, y, w - b, y);
+                }
+            }
+
+            ctx.save();
+            ctx.beginPath();
+            ctx.rect(b, b, iw, ih);
+            ctx.clip();
+            ctx.lineWidth = 1.25;
+            ctx.globalAlpha = 0.85;
+            const n = Math.max(gx.count, gy.count);
+            line(X(0), Y(0), X(n), Y(n));
+            ctx.restore();
+
+            const every = labelEvery(Math.min(gx.step, gy.step));
+            ctx.lineWidth = 1;
+            ctx.font = "500 " + Math.round(b * 0.36) + "px ui-sans-serif, system-ui, sans-serif";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            const mid = b * 0.42;
+            for (let i = 0; i <= gx.count; i++) {
+                const x = snap(X(i), 1);
+                const len = b * (i % 5 === 0 ? 0.36 : 0.2);
+                ctx.globalAlpha = 0.9;
+                line(x, b, x, b - len);
+                line(x, h - b, x, h - b + len);
+                if (i % every === 0) {
+                    ctx.globalAlpha = 0.8;
+                    ctx.fillText(String(i), X(i), mid);
+                    ctx.fillText(String(i), X(i), h - mid);
+                }
+            }
+            for (let j = 0; j <= gy.count; j++) {
+                const y = snap(Y(j), 1);
+                const len = b * (j % 5 === 0 ? 0.36 : 0.2);
+                ctx.globalAlpha = 0.9;
+                line(b, y, b - len, y);
+                line(w - b, y, w - b + len, y);
+                if (j % every === 0) {
+                    ctx.globalAlpha = 0.8;
+                    ctx.fillText(String(j), mid, Y(j));
+                    ctx.fillText(String(j), w - mid, Y(j));
+                }
+            }
+            ctx.globalAlpha = 1;
+        }
+
+        const VERTEX_SRC = `#version 300 es
+        in vec2 aPos;
+        out vec2 vUv;
+        void main() {
+            vUv = aPos * 0.5 + 0.5;
+            gl_Position = vec4(aPos, 0.0, 1.0);
+        }`;
+
+        const FRAGMENT_SRC = `#version 300 es
+        precision highp float;
+        in vec2 vUv;
+        out vec4 outColor;
+
+        uniform sampler2D uInk;
+        uniform vec2 uResolution;
+        uniform float uTime;
+        uniform vec3 uMat;
+        uniform vec3 uSun;
+        uniform float uIntensity;
+
+        float hash(vec2 p) {
+            vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+            p3 += dot(p3, p3.yzx + 33.33);
+            return fract((p3.x + p3.y) * p3.z);
+        }
+
+        float noise(vec2 p) {
+            vec2 i = floor(p), f = fract(p);
+            vec2 u = f * f * (3.0 - 2.0 * f);
+            return mix(mix(hash(i), hash(i + vec2(1, 0)), u.x),
+                       mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), u.x), u.y);
+        }
+
+        float fbm(vec2 p) {
+            float s = 0.0, a = 0.5;
+            for (int i = 0; i < 4; i++) { s += a * noise(p); p = p * 2.03 + 17.1; a *= 0.5; }
+            return s / 0.9375;
+        }
+
+        float sunlight(vec2 p, float t) {
+            float a = -0.72 + 0.03 * sin(t * 0.19) + 0.015 * sin(t * 0.47 + 1.3);
+            vec2 dir = vec2(cos(a), sin(a));
+            vec2 nrm = vec2(-dir.y, dir.x);
+            float along = dot(p, dir);
+            float across = dot(p, nrm);
+
+            float pen = 0.55 + 0.45 * noise(vec2(along * 0.9 + 4.0, t * 0.03));
+            float s = across * 3.1 + 0.25 * sin(t * 0.11) + t * 0.012;
+            float band = sin(6.2831853 * s) + 0.45 * sin(6.2831853 * s * 0.43 + 1.7);
+            float slats = smoothstep(-pen, pen, band + 0.15);
+
+            vec2 wind = vec2(t * 0.03 + 0.05 * sin(t * 0.37), 0.04 * sin(t * 0.23) + 0.02 * sin(t * 0.83));
+            float f = fbm(p * 1.6 + wind) * 0.7 + fbm(p * 2.8 - wind * 1.4 + 9.0) * 0.3;
+            float leaves = mix(0.3, 1.0, smoothstep(0.36, 0.6, f));
+
+            float pool = 0.45 + 0.55 * smoothstep(-1.1, 0.7, dot(p, vec2(-0.55, 0.83)) + 0.12 * sin(t * 0.05));
+            return slats * leaves * pool;
+        }
+
+        void main() {
+            vec2 frag = vUv * uResolution;
+            float m = min(uResolution.x, uResolution.y);
+            vec2 p = (frag - 0.5 * uResolution) / m;
+            float t = uTime;
+
+            vec2 texel = 1.0 / uResolution;
+            vec4 ink = texture(uInk, vUv);
+            float glow = 0.25 * (texture(uInk, vUv + vec2(2.0, 0.0) * texel).r
+                               + texture(uInk, vUv - vec2(2.0, 0.0) * texel).r
+                               + texture(uInk, vUv + vec2(0.0, 2.0) * texel).r
+                               + texture(uInk, vUv - vec2(0.0, 2.0) * texel).r);
+
+            float grain = hash(floor(frag)) - 0.5;
+            float mottle = fbm(p * 5.0 + 3.1) - 0.5;
+            vec3 mat = uMat * (1.0 + grain * 0.06 + mottle * 0.14);
+            mat *= mix(1.0, 0.6, ink.g);
+            vec3 albedo = mat;
+
+            float L = sunlight(p, t) * uIntensity;
+
+            vec3 sky = vec3(0.5, 0.66, 0.74);
+            vec3 col = albedo * (sky * 0.95 + uSun * L * 1.3);
+            col += uMat * uSun * vec3(0.9, 1.15, 0.6) * L * 0.55;
+            col = mix(col, vec3(0.78, 0.85, 0.82) + uSun * L * 0.5, ink.r * 0.92);
+            col += vec3(0.8) * glow * (0.05 + 0.12 * L);
+
+            col = 1.0 - exp(-col * 1.2);
+            vec2 v = vUv - 0.5;
+            col *= 1.0 - 0.35 * dot(v, v);
+            col = pow(col, vec3(1.0 / 2.2));
+            col += (hash(frag + fract(t) * 91.7) - 0.5) / 255.0;
+            outColor = vec4(col, 1.0);
+        }`;
+
+        window.addEventListener('DOMContentLoaded', () => {
+            const canvas = document.getElementById('gl-canvas');
+            if (!canvas) return;
+            const gl = canvas.getContext('webgl2', { antialias: false, alpha: false });
+            const ink2d = document.createElement('canvas');
+            const ctx = ink2d.getContext('2d');
+            if (!gl || !ctx) return;
+
+            const compile = (type, src) => {
+                const s = gl.createShader(type);
+                gl.shaderSource(s, src);
+                gl.compileShader(s);
+                return s;
+            };
+            const vs = compile(gl.VERTEX_SHADER, VERTEX_SRC);
+            const fs = compile(gl.FRAGMENT_SHADER, FRAGMENT_SRC);
+            const program = gl.createProgram();
+            gl.attachShader(program, vs);
+            gl.attachShader(program, fs);
+            gl.linkProgram(program);
+            gl.deleteShader(vs);
+            gl.deleteShader(fs);
+            gl.useProgram(program);
+
+            const vao = gl.createVertexArray();
+            const buffer = gl.createBuffer();
+            gl.bindVertexArray(vao);
+            gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+            const aPos = gl.getAttribLocation(program, "aPos");
+            gl.enableVertexAttribArray(aPos);
+            gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+
+            const texture = gl.createTexture();
+            gl.bindTexture(gl.TEXTURE_2D, texture);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+            gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+
+            const u = (name) => gl.getUniformLocation(program, name);
+            const uInk = u("uInk");
+            const uResolution = u("uResolution");
+            const uTime = u("uTime");
+            const uMat = u("uMat");
+            const uSun = u("uSun");
+            const uIntensity = u("uIntensity");
+            gl.uniform1i(uInk, 0);
+
+            let dirty = true;
+            const unit = 32;
+
+            const resize = () => {
+                const dpr = Math.min(window.devicePixelRatio || 1, 2);
+                const w = Math.max(1, window.innerWidth);
+                const h = Math.max(1, window.innerHeight);
+                canvas.width = ink2d.width = Math.round(w * dpr);
+                canvas.height = ink2d.height = Math.round(h * dpr);
+                canvas.style.width = w + 'px';
+                canvas.style.height = h + 'px';
+
+                drawMat(ctx, w, h, dpr, unit);
+                gl.bindTexture(gl.TEXTURE_2D, texture);
+                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, ink2d);
+                gl.viewport(0, 0, canvas.width, canvas.height);
+                dirty = false;
+            };
+
+            const render = (time) => {
+                if (dirty) resize();
+                gl.uniform2f(uResolution, canvas.width, canvas.height);
+                gl.uniform1f(uTime, time);
+                gl.uniform3fv(uMat, hexToLinear("#0c7f55"));
+                gl.uniform3fv(uSun, hexToLinear("#fff0cf"));
+                gl.uniform1f(uIntensity, 1.2);
+                gl.drawArrays(gl.TRIANGLES, 0, 3);
+            };
+
+            const T0 = 40;
+            let raf = 0;
+            let sim = T0;
+            let last = performance.now();
+            const frame = (now) => {
+                sim += Math.min(0.1, (now - last) / 1000) * 0.8;
+                last = now;
+                render(sim);
+                raf = requestAnimationFrame(frame);
+            };
+
+            window.addEventListener('resize', () => { dirty = true; });
+            requestAnimationFrame(frame);
+        });
+    </script>
+
+    <!-- Timer Script -->
+    <script>
+        let workDuration = 25 * 60;
+        let breakDuration = 5 * 60;
+        let timeLeft = workDuration;
+        let timerId = null;
+        let isRunning = false;
+        let currentMode = 'work';
+
+        const display = document.getElementById('timer-display');
+        const statusText = document.getElementById('timer-status');
+        const toggleBtnText = document.getElementById('text-toggle');
+        const playIcon = document.getElementById('icon-play');
+        const btnWork = document.getElementById('btn-work');
+        const btnBreak = document.getElementById('btn-break');
+
+        function updateDisplay() {
+            const minutes = Math.floor(timeLeft / 60);
+            const seconds = timeLeft % 60;
+            display.textContent = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+            document.title = `(${display.textContent}) Pomodoro`;
+        }
+
+        function switchMode(mode) {
+            pauseTimer();
+            currentMode = mode;
+            if (mode === 'work') {
+                timeLeft = workDuration;
+                statusText.textContent = "Focus Session";
+                btnWork.className = "flex-1 py-2 text-xs font-medium rounded-lg transition-all text-white bg-emerald-600 shadow-sm";
+                btnBreak.className = "flex-1 py-2 text-xs font-medium rounded-lg transition-all text-emerald-200/70 hover:text-white";
+            } else {
+                timeLeft = breakDuration;
+                statusText.textContent = "Break Time";
+                btnBreak.className = "flex-1 py-2 text-xs font-medium rounded-lg transition-all text-white bg-teal-600 shadow-sm";
+                btnWork.className = "flex-1 py-2 text-xs font-medium rounded-lg transition-all text-emerald-200/70 hover:text-white";
+            }
+            updateDisplay();
+        }
+
+        function toggleTimer() {
+            if (isRunning) {
+                pauseTimer();
+            } else {
+                startTimer();
+            }
+        }
+
+        function startTimer() {
+            isRunning = true;
+            toggleBtnText.textContent = "Pause";
+            playIcon.innerHTML = '<path d="M6 5h4v14H6V5zm8 0h4v14h-4V5z"/>';
+            
+            timerId = setInterval(() => {
+                if (timeLeft > 0) {
+                    timeLeft--;
+                    updateDisplay();
+                } else {
+                    clearInterval(timerId);
+                    isRunning = false;
+                    alert(currentMode === 'work' ? "Work session complete! Time for a break." : "Break over! Back to work.");
+                    switchMode(currentMode === 'work' ? 'break' : 'work');
+                }
+            }, 1000);
+        }
+
+        function pauseTimer() {
+            isRunning = false;
+            clearInterval(timerId);
+            toggleBtnText.textContent = "Start";
+            playIcon.innerHTML = '<path d="M8 5v14l11-7z"/>';
+        }
+
+        function resetTimer() {
+            pauseTimer();
+            timeLeft = currentMode === 'work' ? workDuration : breakDuration;
+            updateDisplay();
+        }
+
+        updateDisplay();
+    </script>
+</body>
+</html>
